@@ -1,5 +1,13 @@
 # Ansible
 
+## 환경 준비
+- Linux/WSL(권장), 또는 macOS
+- Python 3.9+
+- Ansible (ansible-core)
+- AWS 자격증명(Access Key / Secret Key 또는 SSO/프로파일)
+---
+---
+
 ## VSCode + WSL 설정 (캡처 순서)
 
 1) **VSCode에서 WSL 확장 확인**
@@ -117,15 +125,9 @@ find . -type f \(   -name '*Zone.Identifier' -o   -name '*:Zone.Identifier*' -o 
 - **커밋 방지**: `.gitignore` 패턴 추가
 
 ---
+---
 
-## 환경 준비
-
-- Linux/WSL(권장), 또는 macOS
-- Python 3.9+
-- Ansible (ansible-core)
-- AWS 자격증명(Access Key / Secret Key 또는 SSO/프로파일)
-
-## 설치
+# 설치
 
 ```bash
 ./scripts/bootstrap.sh
@@ -284,7 +286,7 @@ ansible-playbook -i inventories/dev/hosts.ini playbooks/13_blue_green_switch.yml
 
 - 문서: `docs/06_ssm_connection.md`
 
-원샷 프로비저닝(EC2 생성 + SSM 역할/프로파일 + 태그):
+### 원샷 프로비저닝(EC2 생성 + SSM 역할/프로파일 + 태그):
 
 ```bash
 ansible-playbook playbooks/20_aws_provision_ssm_no_ssh.yml \
@@ -294,57 +296,29 @@ ansible-playbook playbooks/20_aws_provision_ssm_no_ssh.yml \
 ansible-inventory -i inventories/aws/aws_ec2.yml --graph
 ```
 
-SSM로 구성/배포(SSH 없이):
+### SSM로 구성/배포(SSH 없이):
 
 ```bash
 ansible-playbook -i inventories/aws/aws_ec2.yml playbooks/21_post_provision_via_ssm.yml
 ```
 
-정리(비용 방지):
+### 정리(비용 방지):
 
 ```bash
 ansible-playbook playbooks/23_aws_cleanup.yml -e aws_region=ap-northeast-2 -e environment=dev
 ```
 ---
 ## 자세한 단계별 가이드는 `docs/`를 참고하세요.
+
+---
 ---
 
-### 구성:
+# 보안 관련 예시
 - **Trivy**: 컨테이너/이미지 취약점 스캐너 (리포트 생성)
 - **Docker Bench for Security**: 도커 호스트 보안 점검(베스트프랙티스 체크리스트)
 - **CrowdSec + Nginx(옵션)**: Nginx 로그를 기반으로 탐지/알림을 확인하는 실습
 
 > 실습 목적: “도커 기반 보안 도구를 Ansible로 배포/실행/결과물 생성”까지 한 번에 경험.
-
----
-
-## 0) 사전 준비
-
-- Linux(Ubuntu/Debian 권장)
-- Ansible 설치
-- (권장) sudo 권한
-
-### Ansible collection 설치
-본 랩은 `community.docker` collection을 사용합니다.
-
-```bash
-ansible-galaxy collection install -r requirements.yml
-```
-
----
-
-## 1) Docker 설치 (필요한 경우만)
-
-Docker가 아직 없다면 아래 playbook을 실행하세요.
-
-```bash
-ansible-playbook playbooks/00_bootstrap.yml -K
-```
-
-- `-K`는 sudo 비밀번호 입력을 위해 필요할 수 있습니다.
-- 실행 후, 현재 사용자를 docker 그룹에 추가하므로 **재로그인**이 필요할 수 있습니다.
-
----
 
 ## Trivy(트리비)로 이미지 취약점 스캔
 
@@ -371,24 +345,77 @@ cd /opt/security-lab/reports
 python3 -m http.server 8000 --bind 0.0.0.0
 ```
 ---
+## 커스터마이징 포인트
 
-## 3) Docker Bench for Security로 호스트 점검
-
-```bash
-ansible-playbook playbooks/02_docker_bench.yml -K
+### 스캔 대상 이미지 바꾸기
+`group_vars/all.yml`에서:
+```yaml
+scan_image: "alpine:3.21"
 ```
-
-결과물:
-- `/opt/security-lab/reports/docker-bench-YYYYMMDD-HHMMSS.txt`
+### 처럼 변경한 뒤 Trivy playbook을 재실행하세요.
 
 ---
+---
 
-## 4) (옵션) CrowdSec + Nginx 로그 기반 탐지 실습
-
-`group_vars/all.yml`의 `enable_crowdsec_lab: true`일 때 동작합니다.
+## Docker Bench for Security로 호스트 점검
+### Docker Bench는 CIS Docker Benchmark(커뮤니티 에디션 기준) 계열 체크리스트를 기반으로,
+### Host 설정(파티션 분리, 감사/auditd, 접근권한 등)
+### Docker daemon 설정(TLS, userns, authorization plugin, live-restore, no-new-privileges 등)
+### daemon 설정 파일 권한(/etc/docker, docker.service/socket 권한 등)
+### 이미지/빌드(HEALTHCHECK, trusted base image, ADD 사용 여부 등)
+### 런타임(메모리/CPU 제한, read-only FS, PIDs 제한, AppArmor/SELinux 등)
+### 운영(이미지/컨테이너 sprawl)
+### Swarm 설정
+### 을 한 번에 점검해서 PASS/WARN/NOTE로 보여주는 툴이에요.
 
 ```bash
-ansible-playbook playbooks/03_crowdsec_nginx_lab.yml -K
+ansible-playbook playbooks/92_docker_bench.yml -K
+chmod +x files/docker_bench_to_html.py
+
+```
+
+### 결과물:
+- `/opt/security-lab/reports/docker-bench-YYYYMMDD-HHMMSS.txt`
+```
+python3 -m http.server 8000 -d /opt/security-lab/reports --bind 0.0.0.0
+```
+## docker-bench-YYYYMMDD-9999999.html 파일등이 생성 되며
+![alt text](image-5.png)
+
+---
+---
+
+## CrowdSec + Nginx 로그 기반 탐지 실습
+## CrowdSec는 “로그 기반 침입 탐지 + 차단(리미디에이션)”을 하는 오픈소스 협업형 IPS예요. Fail2ban처럼 로그를 보고 공격을 탐지하지만, 탐지 로직(시나리오/파서)을 Hub로 배포/업데이트하고, 차단은 **Bouncer(연동 컴포넌트)**가 담당하는 구조가 핵심입니다.
+
+## 동작 구조 (왜 “엔진 + API + 바운서”로 나뉘나)
+## Security Engine (탐지 엔진)
+## 서버/컨테이너의 로그를 수집(acquis) → **파서(parser)**로 정규화 → **시나리오(scenario)**로 공격 패턴 판단
+## 공격이 감지되면 “이 IP를 n시간 차단” 같은 **결정(decision)**을 만들고 로컬 API에 저장합니다.
+```
+Local API (LAPI)
+
+엔진이 만든 **결정/알림(alert/decision)**을 Bouncer들이 조회할 수 있게 제공하는 로컬 API 서버입니다.
+
+Bouncers (차단/리미디에이션)
+
+방화벽(iptables/nftables), 리버스프록시(Nginx/Traefik 등), WAF 계열 플러그인 등이 여기에 해당합니다.
+
+Bouncer는 LAPI에서 “차단 목록”을 받아 실제로 트래픽을 막아요.
+
+Hub (시나리오/파서/컬렉션 배포처)
+
+공식/커뮤니티 룰셋 저장소처럼 동작하고, cscli로 설치/업데이트합니다.
+
+WAF도 되나요? (AppSec 컴포넌트)
+
+CrowdSec는 “IP 차단”뿐 아니라 웹 요청 자체를 검사하는 AppSec(WAF) 컴포넌트도 제공합니다.
+구성은 보통 (리버스프록시/바운서) → (AppSec 컴포넌트) → (백엔드) 흐름으로 잡습니다.
+```
+---
+
+```bash
+ansible-playbook -i inventories/local/hosts.ini playbooks/93_crowdsec_nginx_lab.yml -K
 ```
 
 ### 4-1) 로그 생성(트래픽 발생)
@@ -411,31 +438,6 @@ docker exec -it lab-crowdsec cscli alerts list
 > CrowdSec는 시나리오/컬렉션/파서 구성에 따라 탐지 결과가 달라집니다.  
 > 이 랩은 “로그를 읽고 상태/알림을 확인하는 흐름”을 익히는 데 초점을 둡니다.
 
----
-
-## 커스터마이징 포인트
-
-### 스캔 대상 이미지 바꾸기
-`group_vars/all.yml`에서:
-```yaml
-scan_image: "alpine:3.21"
-```
-처럼 변경한 뒤 Trivy playbook을 재실행하세요.
-
-### 설치 경로 바꾸기
-`lab_root` 값을 바꾸면 `/opt/security-lab` 대신 다른 경로를 사용할 수 있습니다.
-
----
 
 
----
 
-## 빠른 실행 요약
-
-```bash
-ansible-galaxy collection install -r requirements.yml
-ansible-playbook playbooks/00_bootstrap.yml -K
-ansible-playbook playbooks/01_trivy_scan.yml -K
-ansible-playbook playbooks/02_docker_bench.yml -K
-ansible-playbook playbooks/03_crowdsec_nginx_lab.yml -K
-```

@@ -1,6 +1,7 @@
 ---
 - name: "03) CrowdSec + Nginx: 로그 기반 보안 탐지(실습용)"
-  hosts: lab
+  hosts: localhost
+  connection: local
   become: true
   vars:
     nginx_container: "lab-nginx"

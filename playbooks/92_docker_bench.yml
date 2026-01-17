@@ -1,0 +1,144 @@
+---
+- name: "92) Docker Bench for Security: 도커 호스트 보안 베스트프랙티스 점검 + HTML 리포트"
+  hosts: localhost
+  connection: local
+  become: true
+
+  vars:
+    lab_root: /opt/security-lab
+    reports_dir: "{{ lab_root }}/reports"
+    bench_image: "docker/docker-bench-security:latest"
+    bench_parser: "{{ playbook_dir }}/../files/docker_bench_to_html.py"
+
+    # (선택) 브라우저 없는 서버에서 웹으로 보기
+    serve_html: false
+    serve_port: 18080
+
+  tasks:
+    - name: Ensure reports directory exists
+      ansible.builtin.file:
+        path: "{{ reports_dir }}"
+        state: directory
+        mode: "0755"
+
+    # ✅ 1단계: timestamp 먼저 생성 (같은 task 안에서 참조 금지)
+    - name: Freeze timestamp once
+      ansible.builtin.set_fact:
+        bench_ts: "{{ lookup('pipe', 'date +%Y%m%d-%H%M%S') }}"
+
+    # ✅ 2단계: timestamp 기반 경로 생성
+    - name: Set report paths using frozen timestamp
+      ansible.builtin.set_fact:
+        raw_path: "{{ reports_dir }}/docker-bench-{{ bench_ts }}.raw.txt"
+        clean_path: "{{ reports_dir }}/docker-bench-{{ bench_ts }}.txt"
+        html_path: "{{ reports_dir }}/docker-bench-{{ bench_ts }}.html"
+
+    - name: Show generated paths
+      ansible.builtin.debug:
+        msg:
+          - "bench_ts={{ bench_ts }}"
+          - "raw_path={{ raw_path }}"
+          - "clean_path={{ clean_path }}"
+          - "html_path={{ html_path }}"
+
+    - name: Pull Docker Bench image
+      ansible.builtin.command: "docker pull {{ bench_image }}"
+      register: pull_out
+      changed_when: >
+        ('Downloaded newer image' in pull_out.stdout) or
+        ('Pull complete' in pull_out.stdout)
+
+    - name: Run Docker Bench (RAW with ANSI colors)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        docker run --rm \
+          --net host \
+          --pid host \
+          --userns host \
+          --cap-add audit_control \
+          -e DOCKER_CONTENT_TRUST=1 \
+          -v /var/lib:/var/lib:ro \
+          -v /var/run/docker.sock:/var/run/docker.sock:ro \
+          -v /usr/lib/systemd:/usr/lib/systemd:ro \
+          -v /etc:/etc:ro \
+          {{ bench_image }} 2>&1 | tee "{{ raw_path }}"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Stat RAW
+      ansible.builtin.stat:
+        path: "{{ raw_path }}"
+      register: raw_stat
+
+    - name: Fail if RAW is missing
+      ansible.builtin.fail:
+        msg: "RAW file not created: {{ raw_path }} (docker run failed or permission/path issue)"
+      when: not raw_stat.stat.exists
+
+    - name: Strip ANSI color codes -> clean txt
+      ansible.builtin.shell: |
+        set -euo pipefail
+        sed -r 's/\x1B\[[0-9;]*[A-Za-z]//g' "{{ raw_path }}" > "{{ clean_path }}"
+      args:
+        executable: /bin/bash
+      changed_when: true
+
+    - name: Stat CLEAN
+      ansible.builtin.stat:
+        path: "{{ clean_path }}"
+      register: clean_stat
+
+    - name: Fail if CLEAN is missing
+      ansible.builtin.fail:
+        msg: "CLEAN file not created: {{ clean_path }}"
+      when: not clean_stat.stat.exists
+
+    - name: Check parser exists
+      ansible.builtin.stat:
+        path: "{{ bench_parser }}"
+      register: parser_stat
+
+    - name: Fail if parser missing
+      ansible.builtin.fail:
+        msg: "Parser script not found: {{ bench_parser }} (create files/docker_bench_to_html.py)"
+      when: not parser_stat.stat.exists
+
+    - name: Generate HTML report from clean txt (python script)
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ bench_parser }}"
+          - "{{ clean_path }}"
+          - "{{ html_path }}"
+      changed_when: true
+
+    - name: Stat HTML
+      ansible.builtin.stat:
+        path: "{{ html_path }}"
+      register: html_stat
+
+    - name: Fail if HTML is missing
+      ansible.builtin.fail:
+        msg: "HTML file not created: {{ html_path }}"
+      when: not html_stat.stat.exists
+
+    - name: Print report locations
+      ansible.builtin.debug:
+        msg:
+          - "Docker Bench RAW : {{ raw_path }}"
+          - "Docker Bench TXT : {{ clean_path }}"
+          - "Docker Bench HTML: {{ html_path }}"
+          - "TIP1) 서버에 브라우저 없으면 scp로 가져와 로컬에서 열기"
+          - "     scp user@server:{{ html_path }} ."
+          - "TIP2) 또는 serve_html=true로 웹서버 띄우기"
+
+    - name: Start simple http server to view HTML (optional)
+      ansible.builtin.shell: |
+        set -euo pipefail
+        nohup python3 -m http.server {{ serve_port }} --directory "{{ reports_dir }}" >/tmp/docker-bench-http.log 2>&1 &
+        echo "http://<SERVER-IP>:{{ serve_port }}/{{ html_path | basename }}"
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: serve_html | bool

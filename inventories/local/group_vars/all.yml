@@ -1,4 +1,3 @@
----
 # 공통 변수
 app_user: app
 app_group: app
@@ -8,7 +7,13 @@ web_root: /var/www/html
 
 # Docker
 install_docker: true
+
+# Security Lab
+lab_root: /opt/security-lab
+reports_dir: "{{ lab_root }}/reports"
+nginx_logs_dir: "{{ lab_root }}/nginx/logs"
 enable_crowdsec_lab: true
+
 
 # AWS 기본값 (학습용)
 aws_region: ap-northeast-2
